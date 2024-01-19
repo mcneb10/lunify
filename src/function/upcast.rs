@@ -14,9 +14,15 @@ pub(crate) fn upcast(
 ) -> Result<(Vec<lua51::Instruction>, Vec<i64>), LunifyError> {
     let mut builder = FunctionBuilder::default();
     let mut constant_manager = ConstantManager { constants };
+    let has_lineinfo = line_info.len() > 0;
 
-    for (instruction, line_number) in instructions.into_iter().zip(line_info) {
-        builder.set_line_number(line_number);
+    for (i, instruction) in instructions.into_iter().enumerate() {
+        if has_lineinfo {
+            builder.set_line_number(match line_info.get(i) {
+                Some(v) => *v,
+                None => return Err(LunifyError::InputTooLong),
+            });
+        }
 
         match instruction {
             lua50::Instruction::Move { a, mode } => builder.instruction(lua51::Instruction::Move { a, mode }),
@@ -83,10 +89,13 @@ pub(crate) fn upcast(
                 // that moves the program counter to the `FORLOOP` instruction,
                 // meaning this `GetGlobal` will *always* be called after we
                 // already saved RA+3 with our `SETGLOBAL` instruction.
-                builder.insert_extra_instruction(position, lua51::Instruction::GetGlobal {
-                    a: a + 3,
-                    mode: Bx(global_constant),
-                });
+                builder.insert_extra_instruction(
+                    position,
+                    lua51::Instruction::GetGlobal {
+                        a: a + 3,
+                        mode: Bx(global_constant),
+                    },
+                );
             }
             lua50::Instruction::TForLoop { a, mode: BC(_, c) } => {
                 // The `TFORLOOP` instruction in Lua 5.0 can move multiple results to the stack
@@ -285,10 +294,13 @@ pub(crate) fn upcast(
                                 if let Some(stack_destination) = instruction.stack_destination() {
                                     if offset + stack_destination.start as i64 - 1 == (a + settings.output.fields_per_flush) as i64 {
                                         // Add a new `SETLIST` instruction.
-                                        builder.insert_extra_instruction(instruction_index, lua51::Instruction::SetList {
-                                            a,
-                                            mode: BC(Generic(settings.output.fields_per_flush), Generic(page)),
-                                        });
+                                        builder.insert_extra_instruction(
+                                            instruction_index,
+                                            lua51::Instruction::SetList {
+                                                a,
+                                                mode: BC(Generic(settings.output.fields_per_flush), Generic(page)),
+                                            },
+                                        );
 
                                         offset -= settings.output.fields_per_flush as i64;
                                         page += 1;
@@ -330,28 +342,40 @@ pub(crate) fn upcast(
         let arg_stack_position = parameter_count as u64;
 
         // Create a new empty table to hold our arguments.
-        builder.insert_extra_instruction(0, lua51::Instruction::NewTable {
-            a: arg_stack_position + 1,
-            mode: BC(Unused, Unused),
-        });
+        builder.insert_extra_instruction(
+            0,
+            lua51::Instruction::NewTable {
+                a: arg_stack_position + 1,
+                mode: BC(Unused, Unused),
+            },
+        );
 
         // Push all variadic arguments onto the stack.
-        builder.insert_extra_instruction(1, lua51::Instruction::VarArg {
-            a: arg_stack_position + 2,
-            mode: BC(Generic(0), Unused),
-        });
+        builder.insert_extra_instruction(
+            1,
+            lua51::Instruction::VarArg {
+                a: arg_stack_position + 2,
+                mode: BC(Generic(0), Unused),
+            },
+        );
 
         // Add all values from the stack to the table.
-        builder.insert_extra_instruction(2, lua51::Instruction::SetList {
-            a: arg_stack_position + 1,
-            mode: BC(Generic(0), Generic(1)),
-        });
+        builder.insert_extra_instruction(
+            2,
+            lua51::Instruction::SetList {
+                a: arg_stack_position + 1,
+                mode: BC(Generic(0), Generic(1)),
+            },
+        );
 
         // Move the table to the location of the argument.
-        builder.insert_extra_instruction(3, lua51::Instruction::Move {
-            a: arg_stack_position,
-            mode: BC(Register(arg_stack_position + 1), Unused),
-        });
+        builder.insert_extra_instruction(
+            3,
+            lua51::Instruction::Move {
+                a: arg_stack_position,
+                mode: BC(Register(arg_stack_position + 1), Unused),
+            },
+        );
     }
 
     builder.finalize(maximum_stack_size, settings)
@@ -614,16 +638,19 @@ mod tests {
     #[test]
     fn upcast_set_list_from_parameters() -> Result<(), LunifyError> {
         let settings = test_settings();
-        let instructions = vec![lua50::Instruction::LoadK { a: 5, mode: Bx(0) }, lua50::Instruction::SetList {
-            a: 0,
-            mode: Bx(4),
-        }];
+        let instructions = vec![
+            lua50::Instruction::LoadK { a: 5, mode: Bx(0) },
+            lua50::Instruction::SetList { a: 0, mode: Bx(4) },
+        ];
 
         let (instructions, _) = upcast(instructions, vec![0; 2], &mut Vec::new(), &mut 2, 0, false, &settings)?;
-        let expected = vec![lua51::Instruction::LoadK { a: 5, mode: Bx(0) }, lua51::Instruction::SetList {
-            a: 0,
-            mode: BC(Generic(5), Generic(1)),
-        }];
+        let expected = vec![
+            lua51::Instruction::LoadK { a: 5, mode: Bx(0) },
+            lua51::Instruction::SetList {
+                a: 0,
+                mode: BC(Generic(5), Generic(1)),
+            },
+        ];
 
         assert_eq!(instructions, expected);
         Ok(())
