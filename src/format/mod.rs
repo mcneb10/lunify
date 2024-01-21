@@ -94,7 +94,11 @@ impl Format {
             LuaVersion::Lua50 => {
                 // Is there even a way to get this information from Lua 5.0?
                 let value = from_slice!(byte_stream, number_width, endianness, f32, f64);
-                value != 31415926.535897933
+                if number_width == BitWidth::Bit32 {
+                    f64::abs(value - 31415926.0) > 1.0
+                } else {
+                    value != 31415926.535897933
+                }
             }
         };
 
